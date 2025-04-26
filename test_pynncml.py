@@ -8,7 +8,7 @@ import scipy
 from sklearn import metrics
 from torch.utils.data import Subset
 import os
-# Git check
+# Git check (again)
 xy_min = [1.29e6, 0.565e6]  # Link Region
 xy_max = [1.34e6, 0.5875e6]
 time_slice = slice("2015-06-01", "2015-06-10")  # Time Interval
