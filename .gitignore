@@ -1,0 +1,15 @@
+# Ignore everything by default
+*
+
+# Allow only top-level .py files
+!/*.py
+
+# Allow this .gitignore file itself
+!.gitignore
+
+# Explicitly ignore common unnecessary files
+.DS_Store
+__pycache__/
+*.pyc
+.idea/
+.venv/
