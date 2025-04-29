@@ -1,0 +1,21 @@
+# Ignore everything
+*
+
+# Allow Python scripts
+!/*.py
+
+# Allow the .gitignore file itself
+!.gitignore
+
+# Explicitly ignore the entire data folder
+data/
+
+# Optional: ignore typical dev clutter
+.DS_Store
+__pycache__/
+*.pyc
+.idea/
+.venv/
+
+
+
