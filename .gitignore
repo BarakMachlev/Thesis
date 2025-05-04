@@ -6,6 +6,8 @@
 
 # Allow the .gitignore file itself
 !.gitignore
+!.vscode/
+!.vscode/*
 
 # Explicitly ignore the entire data folder
 data/

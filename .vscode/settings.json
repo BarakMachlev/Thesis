@@ -1,0 +1,9 @@
+{
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "terminal.integrated.env.linux": {
+    "PYTHONPATH": "/home/lucy3/BarakMachlev/PyNNcml"
+  },
+  "python.analysis.extraPaths": [
+    "/home/lucy3/BarakMachlev/PyNNcml"
+  ]
+}

@@ -11,7 +11,7 @@ import os
 
 xy_min = [1.29e6, 0.565e6]  # Link Region
 xy_max = [1.34e6, 0.5875e6]
-time_slice = slice("2015-06-01", "2015-06-10")  # Time Interval
+time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
 samples_type = "instantaneous"  # Options: "instantaneous", "min_max"
 sampling_interval_in_sec = 90 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
@@ -22,12 +22,14 @@ if samples_type == "min_max":
 elif samples_type == "instantaneous":
     rnn_input_size = 2 * (900 // sampling_interval_in_sec)
 
-# Set output directory based on sampling configuration
-output_dir = "/Users/barakmachlev/Documents/Thesis/Influence_of_sampling_intervals_Results/Max_Min"
-if samples_type == "instantaneous":
-    output_dir = f"/Users/barakmachlev/Documents/Thesis/Influence_of_sampling_intervals_Results/Instantaneous_{sampling_interval_in_sec}_sec"
 
-# Create the directory if it doesn't exist
+# Set output directory based on sampling configuration (lab computer path)
+base_output_dir = "/home/lucy3/BarakMachlev/Thesis/Results/Influence_of_sampling_interval"
+if samples_type == "instantaneous":
+    output_dir = os.path.join(base_output_dir, f"Instantaneous_{sampling_interval_in_sec}_sec")
+else:
+    output_dir = os.path.join(base_output_dir, "Max_Min")
+
 os.makedirs(output_dir, exist_ok=True)
 
 dataset = pnc.datasets.loader_open_mrg_dataset(xy_min = xy_min,
@@ -41,8 +43,12 @@ dataset.link_set.plot_links(scale=True, scale_factor=1.0)
 plt.grid()
 plt.tick_params(left=False, right=False, labelleft=False, labelbottom=False, bottom=False)
 plt.title("CML Link Map")
+figure_name = "CML_Link_Map.png"
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+plt.tight_layout()
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
-plt.pause(2)
 plt.close()
 
 plt.figure(2)
@@ -61,6 +67,10 @@ plt.grid()
 plt.xlabel("Rain Rate[mm/hr]")
 plt.ylabel("Density")
 plt.title("Rain Rate Histogram")
+figure_name = "Rain_Rate_Histogram.png"
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.tight_layout()
 plt.show(block=False)
 plt.pause(2)
@@ -74,51 +84,18 @@ n_layers = 2  # @param{type:"integer"}
 lr = 1e-4  # @param{type:"number"}
 weight_decay = 1e-4  # @param{type:"number"}
 rnn_type = pnc.neural_networks.RNNType.GRU  # RNN Type
-n_epochs = 100  # @param{type:"integer"}
+n_epochs = 200  # @param{type:"integer"}
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print("✅ Using device:", device)
+if device.type == "cuda":
+    print("  - GPU Name:", torch.cuda.get_device_name(0))
+else:
+    print("  - Running on CPU")
 
-'''
-training_dataset, validation_dataset = torch.utils.data.random_split(dataset, [0.8, 0.2])
-data_loader = torch.utils.data.DataLoader(training_dataset, batch_size)
-val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size)
-val_indices = validation_dataset.indices  # This is a list of indices in the original dataset
-print(val_indices[-1:])
 
-'''
-'''
-# Random split for links: 80% training, 20% validation (link 0 last in val)
-# Step 1: Split
-training_dataset, validation_dataset = torch.utils.data.random_split(dataset, [0.8, 0.2])
+# Configurable target link
+target_link = 0  # 👈 Change this to choose which link must appear last in validation
 
-# Step 2: Access indices
-train_indices = list(training_dataset.indices)
-val_indices = list(validation_dataset.indices)
-
-# Step 3: Desired link index to force into last val position
-target_idx = 0  # 👈 Set your desired link index here
-
-# Case 1: If already in validation — move to the end
-if target_idx in val_indices:
-    val_indices.remove(target_idx)
-    val_indices.append(target_idx)
-
-# Case 2: If in training — swap it with the last val index
-elif target_idx in train_indices:
-    last_val_idx = val_indices[-1]
-    train_indices.remove(target_idx)
-    val_indices[-1] = target_idx
-    train_indices.append(last_val_idx)
-
-# Step 4: Reconstruct datasets
-training_dataset = Subset(dataset, train_indices)
-validation_dataset = Subset(dataset, val_indices)
-
-# Step 5: Rebuild DataLoaders
-data_loader = torch.utils.data.DataLoader(training_dataset, batch_size)
-val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size)
-
-print(f"✅ Link {target_idx} ensured as last in validation set.")
-'''
 # Fixed split for 132 links: 106 for training, 26 for validation (link 0 last in val)
 assert len(dataset) == 132, "Unexpected number of links — expected 132!"
 all_indices = np.arange(132)
@@ -126,11 +103,11 @@ np.random.seed(42)  # Ensure repeatable split
 np.random.shuffle(all_indices)
 
 # Remove 0 (we will force it into last val index)
-all_indices = all_indices[all_indices != 0]
+all_indices = all_indices[all_indices != target_link]
 
-train_indices = all_indices[:106].tolist()  # 105 + 1 = 106
-val_indices = all_indices[106:].tolist()  # 25
-val_indices.append(0)  # Ensure link 0 is last in validation
+train_indices = all_indices[:106].tolist()  # 106
+val_indices = all_indices[106:].tolist()  # 26
+val_indices.append(target_link)  # Ensure link 0 is last in validation
 
 training_dataset = Subset(dataset, train_indices)
 validation_dataset = Subset(dataset, val_indices)
@@ -138,7 +115,7 @@ validation_dataset = Subset(dataset, val_indices)
 data_loader = torch.utils.data.DataLoader(training_dataset, batch_size)
 val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size)
 
-print(f"✅ Link 0 is ensured as last in validation set.")
+print(f"✅ Link {target_link} is ensured as last in validation set.")
 
 # 🔍 Sanity checks
 train_ids = set(training_dataset.indices)
@@ -146,7 +123,7 @@ val_ids = set(validation_dataset.indices)
 
 assert train_ids.isdisjoint(val_ids), "❌ Overlap between training and validation sets!"
 assert train_ids.union(val_ids) == set(range(132)), "❌ Some link indices missing!"
-assert validation_dataset.indices[-1] == 0, "❌ Link 0 is not last in validation set!"
+assert validation_dataset.indices[-1] == target_link, "❌ Link 0 is not last in validation set!"
 
 
 
@@ -252,7 +229,9 @@ else:
     plt.ylabel("Loss")
     plt.title(f"Training Loss per Epoch ({samples_type}.png)")
     figure_name = f"loss_plot_over_epochs_{samples_type}.png"
-    plt.savefig(os.path.join(output_dir, figure_name))
+    save_path = os.path.join(output_dir, figure_name)
+    plt.savefig(save_path)
+    print(f"✅ Figure saved to {save_path}")
     plt.show(block=False)
     plt.pause(5)
     plt.close()
@@ -277,7 +256,6 @@ with torch.no_grad():
             rain_estimation_detection, state = model(torch.cat([_rsl, _tsl], dim=-1), metadata.to(device), state.detach())
             rain_detection = rain_estimation_detection[:, :, 1]
             rain_hat = rain_estimation_detection[:, :, 0] * torch.round(rain_detection)  # Rain Rate is computed only for wet samples
-            #rain_hat = rain_estimation_detection[:, :, 0]
             rain_hat_list.append(rain_hat.detach().cpu().numpy())
             rain_ref_list.append(_rr.detach().cpu().numpy())
             ga.append(rain_ref_list[-1], rain_hat_list[-1])
@@ -302,7 +280,9 @@ cm_display = metrics.ConfusionMatrixDisplay(confusion_matrix=confusion_matrix, d
 cm_display.plot()
 plt.title(f"Confusion Matrix ({samples_type} Sampling)")
 figure_name = f"confusion_matrix_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
@@ -332,7 +312,9 @@ plt.ylabel("Rain Rate [mm/hr]")
 plt.xlabel("Sample Index")
 plt.grid()
 figure_name = f"Detections_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
@@ -340,14 +322,16 @@ plt.close()
 rain_hat_array = np.concatenate(rain_hat_list, axis=1)
 rain_ref_array = np.concatenate(rain_ref_list, axis=1)
 
-plt.plot(np.cumsum(np.maximum(rain_hat_array[9, :], 0)), label="Two-Steps RNN")
-plt.plot(np.cumsum(rain_ref_array[9, :]), "--", label="Reference")
+plt.plot(np.cumsum(np.maximum(rain_hat_array[-1, :], 0)), label="Two-Steps RNN")
+plt.plot(np.cumsum(rain_ref_array[-1, :]), "--", label="Reference")
 plt.grid()
 plt.legend()
 plt.ylabel("Accumulated Rain-Rate[mm]")
 plt.xlabel("# Samples")
 figure_name = f"Accumulated_Rain_Rate_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
@@ -356,8 +340,8 @@ start_idx = 115
 end_idx = 205
 x = np.arange(start_idx, end_idx)
 
-ref = rain_ref_array[9, start_idx:end_idx]
-hat = rain_hat_array[9, start_idx:end_idx]
+ref = rain_ref_array[-1, start_idx:end_idx]
+hat = rain_hat_array[-1, start_idx:end_idx]
 
 # Compute Pearson correlation - Avoid zero variance issue
 if np.std(ref) == 0 or np.std(hat) == 0:
@@ -375,7 +359,9 @@ plt.grid()
 plt.legend()
 plt.tight_layout()
 figure_name = f"RainRate_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
