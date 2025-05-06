@@ -12,8 +12,8 @@ from pynncml.neural_networks import InputNormalizationConfig
 
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
-samples_type = "instantaneous"  # Options: "instantaneous", "min_max"
-sampling_interval_in_sec = 10 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
+samples_type = "min_max"  # Options: "instantaneous", "min_max"
+sampling_interval_in_sec = 450 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
 
 if samples_type == "min_max":
     rnn_input_size = 4  # MRSL, mRSL, MTSL, mTSL
@@ -261,39 +261,54 @@ else:
     plt.pause(5)
     plt.close()
 
-'''
+
 model.eval()
 ga = GroupAnalysis()
+am.clear()
+
+rain_hat_list = []
+rain_ref_list = []
+detection_list = []
 
 with torch.no_grad():
+    state = model.init_state(batch_size=1)
+    counter=0
     for rain_rate, rsl, tsl, metadata in val_loader:
-        state = model.init_state(batch_size=1)
-        m_step = math.floor(rain_rate.shape[1] / window_size)
-        am.clear()
-        rain_ref_list = []
-        rain_hat_list = []
-        detection_list = []
+        counter=counter+1;
+        print(f"\n🔍 Batch {counter}")
+        print(f"  rain_rate.shape: {rain_rate.shape}")
+        print(f"  rsl.shape: {rsl.shape}")
+        print(f"  tsl.shape: {tsl.shape}")
+        # Add batch dimension
+        rain_rate = rain_rate.unsqueeze(0).to(device)  # [1, T]
+        rsl = rsl.unsqueeze(0).to(device)              # [1, T, F]
+        tsl = tsl.unsqueeze(0).to(device)              # [1, T, F]
+        metadata = metadata[0].unsqueeze(0).to(device) # [1, 2]
 
-        for step in range(m_step):
-            _rr = rain_rate[:, step * window_size:(step + 1) * window_size].float().to(device)
-            _rsl = rsl[:, step * window_size:(step + 1) * window_size, :].to(device)
-            _tsl = tsl[:, step * window_size:(step + 1) * window_size, :].to(device)
-            rain_estimation_detection, state = model(torch.cat([_rsl, _tsl], dim=-1), metadata.to(device), state.detach())
-            rain_detection = rain_estimation_detection[:, :, 1]
-            rain_hat = rain_estimation_detection[:, :, 0] * torch.round(rain_detection)  # Rain Rate is computed only for wet samples
-            #rain_hat = rain_estimation_detection[:, :, 0]
-            rain_hat_list.append(rain_hat.detach().cpu().numpy())
-            rain_ref_list.append(_rr.detach().cpu().numpy())
-            ga.append(rain_ref_list[-1], rain_hat_list[-1])
-            detection_list.append(torch.round(rain_detection).detach().cpu().numpy())
-            delta = rain_hat.squeeze(dim=-1) - _rr
-            bias = torch.mean(delta)
-            mse = torch.mean(delta ** 2)
-            am.add_results(bias=bias.item(), mse=mse.item())
-actual = np.concatenate(detection_list).flatten()
-predicted = (np.concatenate(rain_ref_list) > 0.1).astype("float").flatten()
+        rain_estimation_detection, state = model(torch.cat([rsl, tsl], dim=-1), metadata.to(device), state.detach())
+        rain_detection = rain_estimation_detection[:, :, 1]
+        rain_hat = rain_estimation_detection[:, :, 0] * torch.round(rain_detection)  # Rain Rate only for wet samples
+
+        print(f"  rain_hat.shape: {rain_hat.shape}")
+        print(f"  rain_detection.shape: {rain_detection.shape}")
+
+        rain_hat_list.append(rain_hat.cpu().numpy())
+        rain_ref_list.append(rain_rate.cpu().numpy())
+
+        ga.append(rain_ref_list[-1], rain_hat_list[-1])
+        detection_list.append(torch.round(rain_detection).cpu().numpy())
+
+        delta = rain_hat.squeeze() - rain_rate.squeeze()
+        bias = torch.mean(delta)
+        mse = torch.mean(delta ** 2)
+        am.add_results(bias=bias.item(), mse=mse.item())
+# Flatten arrays
+actual = np.concatenate([arr.flatten() for arr in detection_list])
+predicted = (np.concatenate([arr.flatten() for arr in rain_ref_list]) > 0.1).astype(float)
+
 confusion_matrix = metrics.confusion_matrix(actual, predicted)
-max_rain = np.max(np.concatenate(rain_ref_list))
+rain_ref_flat = np.concatenate([arr.flatten() for arr in rain_ref_list])
+max_rain = np.max(rain_ref_flat)
 g_array = np.linspace(0, max_rain, 6)
 
 print("Results Detection:")
@@ -312,23 +327,32 @@ plt.pause(5)
 plt.close()
 
 print("Results Estimation:")
-_ = ga.run_analysis(np.stack([g_array[:-1], g_array[1:]], axis=-1))
+ga.append(rain_rate.squeeze().cpu().numpy(), rain_hat.squeeze().cpu().numpy())
 
-detection_array = np.concatenate(detection_list, axis=1)
-rain_ref_array = np.concatenate(rain_ref_list, axis=1)
+detection_array = np.concatenate([arr.flatten() for arr in detection_list])
+rain_ref_array = np.concatenate([arr.flatten() for arr in rain_ref_list])
+rain_hat_array = np.concatenate([arr.flatten() for arr in rain_hat_list])
 detection_array = np.round(detection_array)
 
-rain_array = rain_ref_array[0, :300]
-detection_array = detection_array[0, :300]
+start_idx = 1000
+end_idx = 1375
+
+rain_array = rain_ref_array[start_idx:end_idx]
+detection_array = detection_array[start_idx:end_idx]
+
+# Plot detection classification
 fig, ax = plt.subplots()
 x = np.arange(rain_array.shape[0])
 ax.plot(x, rain_array, label="Rain")
 rain_max = np.max(rain_array)
+
 ax.fill_between(x, rain_max, where=np.logical_or(np.logical_and(detection_array == 1, rain_array > 0),
                                                  np.logical_and(detection_array == 0, rain_array == 0)),
                 facecolor='green', alpha=.5, label="Detection")
+
 ax.fill_between(x, rain_max, where=np.logical_and(detection_array == 0, rain_array > 0), facecolor='red',
                 alpha=.5, label="Mis-Detection")
+
 ax.fill_between(x, rain_max, where=np.logical_and(detection_array == 1, rain_array == 0), facecolor='blue',
                 alpha=.5, label="False Alarm")
 plt.legend()
@@ -341,11 +365,9 @@ plt.show(block=False)
 plt.pause(5)
 plt.close()
 
-rain_hat_array = np.concatenate(rain_hat_list, axis=1)
-rain_ref_array = np.concatenate(rain_ref_list, axis=1)
-
-plt.plot(np.cumsum(np.maximum(rain_hat_array[-1, :], 0)), label="Two-Steps RNN")
-plt.plot(np.cumsum(rain_ref_array[-1, :]), "--", label="Reference")
+# Plot accumulated rainfall
+plt.plot(np.cumsum(np.maximum(rain_hat_array, 0)), label="Two-Steps RNN")
+plt.plot(np.cumsum(rain_ref_array), "--", label="Reference")
 plt.grid()
 plt.legend()
 plt.ylabel("Accumulated Rain-Rate[mm]")
@@ -356,12 +378,10 @@ plt.show(block=False)
 plt.pause(5)
 plt.close()
 
-start_idx = 115
-end_idx = 205
+# Plot Rain Rate estimation
+ref = rain_ref_array[start_idx:end_idx]
+hat = rain_hat_array[start_idx:end_idx]
 x = np.arange(start_idx, end_idx)
-
-ref = rain_ref_array[-1, start_idx:end_idx]
-hat = rain_hat_array[-1, start_idx:end_idx]
 
 # Compute Pearson correlation - Avoid zero variance issue
 if np.std(ref) == 0 or np.std(hat) == 0:
@@ -383,4 +403,3 @@ plt.savefig(os.path.join(output_dir, figure_name))
 plt.show(block=False)
 plt.pause(5)
 plt.close()
-'''
