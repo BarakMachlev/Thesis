@@ -13,7 +13,7 @@ from pynncml.neural_networks import InputNormalizationConfig
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
 samples_type = "min_max"  # Options: "instantaneous", "min_max"
-sampling_interval_in_sec = 450 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
+sampling_interval_in_sec = 900 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
 
 if samples_type == "min_max":
     rnn_input_size = 4  # MRSL, mRSL, MTSL, mTSL
@@ -30,6 +30,7 @@ if samples_type == "instantaneous":
 os.makedirs(output_dir, exist_ok=True)
 
 dataset = pnc.datasets.loader_open_mrg_dataset(time_slice = time_slice,
+                                               link2gauge_distance=350,
                                                samples_type = samples_type,
                                                sampling_interval_in_sec = sampling_interval_in_sec)
 
@@ -75,12 +76,6 @@ rnn_type = pnc.neural_networks.RNNType.GRU  # RNN Type
 n_epochs = 100  # @param{type:"integer"}
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-'''
-training_dataset, validation_dataset = torch.utils.data.random_split(dataset, [0.8, 0.2])
-data_loader = torch.utils.data.DataLoader(training_dataset, batch_size)
-val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size)
-
-'''
 # Extract the first link from the dataset
 link = dataset.link_set.link_list[0]
 
@@ -117,22 +112,26 @@ validation_dataset = SingleLinkTimeWindowDataset(rain_val, rsl_val, tsl_val, met
 data_loader = torch.utils.data.DataLoader(training_dataset, batch_size)
 val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size)
 
-
-
 # 🔍 DEBUG: Print shape of input tensors before normalization
-print(f"🔢 rsl_train.shape: {rsl_train.shape}")
-print(f"🔢 tsl_train.shape: {tsl_train.shape}")
-print(f"🔢 metadata.shape: {metadata.shape}")
+print(f"🔢 rsl_train.shape: {rsl_train.shape}, type: {type(rsl_train)}")
+print(f"🔢 tsl_train.shape: {tsl_train.shape}, type: {type(tsl_train)}")
+print(f"🔢 metadata.shape: {metadata.shape}, type: {type(metadata)}")
 
 # ✅ Compute dynamic mean/std from RSL + TSL
-_data = torch.cat([torch.from_numpy(rsl_train), torch.from_numpy(tsl_train)], dim=-1)
+rsl_tensor = rsl_train if isinstance(rsl_train, torch.Tensor) else torch.from_numpy(rsl_train)
+tsl_tensor = tsl_train if isinstance(tsl_train, torch.Tensor) else torch.from_numpy(tsl_train)
+print(f"🔎 rsl_tensor.shape: {rsl_tensor.shape}, type: {type(rsl_tensor)}")
+print(f"🔎 tsl_tensor.shape: {tsl_tensor.shape}, type: {type(tsl_tensor)}")
+_data = torch.cat([rsl_tensor, tsl_tensor], dim=-1)
 _data = _data.reshape(-1, rnn_input_size)
 mean_dynamic = _data.mean(dim=0).cpu().numpy().reshape(1, 1, -1)
 std_dynamic = _data.std(dim=0).cpu().numpy().reshape(1, 1, -1)
 std_dynamic[std_dynamic < 1e-6] = 1.0  # Prevent division by zero
 
 # ✅ Compute metadata mean/std
-mean_meta = torch.from_numpy(metadata).reshape(1, -1).cpu().numpy()
+meta_tensor = metadata if isinstance(metadata, torch.Tensor) else torch.from_numpy(metadata)
+print(f"🔎 meta_tensor.shape: {meta_tensor.shape}, type: {type(meta_tensor)}")
+mean_meta = meta_tensor.reshape(1, -1).cpu().numpy()
 std_meta = np.ones_like(mean_meta)  # Avoid zero std for constant metadata
 
 # 🧾 Print computed stats
