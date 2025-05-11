@@ -8,13 +8,15 @@ import scipy
 from sklearn import metrics
 from torch.utils.data import Subset
 import os
+from io import StringIO
+import sys
 
 xy_min = [1.29e6, 0.565e6]  # Link Region
 xy_max = [1.34e6, 0.5875e6]
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
-samples_type = "instantaneous"  # Options: "instantaneous", "min_max"
-sampling_interval_in_sec = 90 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
+samples_type = "min_max"  # Options: "instantaneous", "min_max"
+sampling_interval_in_sec = 180 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
 
 if samples_type == "min_max":
     rnn_input_size = 4  # MRSL, mRSL, MTSL, mTSL
@@ -287,8 +289,23 @@ plt.show(block=False)
 plt.pause(5)
 plt.close()
 
+results_path = os.path.join(output_dir, f"Estimation_Results_{samples_type}.txt")
+
+# Redirect stdout to capture printed PrettyTable
+old_stdout = sys.stdout
+sys.stdout = mystdout = StringIO()
+
 print("Results Estimation:")
 _ = ga.run_analysis(np.stack([g_array[:-1], g_array[1:]], axis=-1))
+
+# Restore normal stdout
+sys.stdout = old_stdout
+
+# Write captured output to file
+with open(results_path, "w") as f:
+    f.write(mystdout.getvalue())
+
+print(f"✅ Results summary saved to: {results_path}")
 
 detection_array = np.concatenate(detection_list, axis=1)
 rain_ref_array = np.concatenate(rain_ref_list, axis=1)
