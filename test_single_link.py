@@ -9,6 +9,9 @@ from sklearn import metrics
 from torch.utils.data import Subset
 import os
 from pynncml.neural_networks import InputNormalizationConfig
+from io import StringIO
+import sys
+
 
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
@@ -274,10 +277,10 @@ with torch.no_grad():
     counter=0
     for rain_rate, rsl, tsl, metadata in val_loader:
         counter=counter+1;
-        print(f"\n🔍 Batch {counter}")
-        print(f"  rain_rate.shape: {rain_rate.shape}")
-        print(f"  rsl.shape: {rsl.shape}")
-        print(f"  tsl.shape: {tsl.shape}")
+        #print(f"\n🔍 Batch {counter}")
+        #print(f"  rain_rate.shape: {rain_rate.shape}")
+        #print(f"  rsl.shape: {rsl.shape}")
+        #print(f"  tsl.shape: {tsl.shape}")
         # Add batch dimension
         rain_rate = rain_rate.unsqueeze(0).to(device)  # [1, T]
         rsl = rsl.unsqueeze(0).to(device)              # [1, T, F]
@@ -288,13 +291,14 @@ with torch.no_grad():
         rain_detection = rain_estimation_detection[:, :, 1]
         rain_hat = rain_estimation_detection[:, :, 0] * torch.round(rain_detection)  # Rain Rate only for wet samples
 
-        print(f"  rain_hat.shape: {rain_hat.shape}")
-        print(f"  rain_detection.shape: {rain_detection.shape}")
+        #print(f"  rain_hat.shape: {rain_hat.shape}")
+        #print(f"  rain_detection.shape: {rain_detection.shape}")
 
         rain_hat_list.append(rain_hat.cpu().numpy())
         rain_ref_list.append(rain_rate.cpu().numpy())
 
-        ga.append(rain_ref_list[-1], rain_hat_list[-1])
+        if rain_ref_list[-1].shape[1] == window_size:
+            ga.append(rain_ref_list[-1], rain_hat_list[-1])
         detection_list.append(torch.round(rain_detection).cpu().numpy())
 
         delta = rain_hat.squeeze() - rain_rate.squeeze()
@@ -325,8 +329,23 @@ plt.show(block=False)
 plt.pause(5)
 plt.close()
 
+results_path = os.path.join(output_dir, f"Estimation_Results_{samples_type}.txt")
+
+# Redirect stdout to capture printed PrettyTable
+old_stdout = sys.stdout
+sys.stdout = mystdout = StringIO()
+
 print("Results Estimation:")
-ga.append(rain_rate.squeeze().cpu().numpy(), rain_hat.squeeze().cpu().numpy())
+_ = ga.run_analysis(np.stack([g_array[:-1], g_array[1:]], axis=-1))
+
+# Restore normal stdout
+sys.stdout = old_stdout
+
+# Write captured output to file
+with open(results_path, "w") as f:
+    f.write(mystdout.getvalue())
+
+print(f"✅ Results summary saved to: {results_path}")
 
 detection_array = np.concatenate([arr.flatten() for arr in detection_list])
 rain_ref_array = np.concatenate([arr.flatten() for arr in rain_ref_list])
