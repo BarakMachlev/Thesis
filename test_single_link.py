@@ -16,7 +16,7 @@ import sys
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
 samples_type = "min_max"  # Options: "instantaneous", "min_max"
-sampling_interval_in_sec = 900 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
+sampling_interval_in_sec = 10 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
 
 if samples_type == "min_max":
     rnn_input_size = 4  # MRSL, mRSL, MTSL, mTSL
@@ -25,9 +25,11 @@ elif samples_type == "instantaneous":
     rnn_input_size = 2 * (900 // sampling_interval_in_sec)
 
 # Set output directory based on sampling configuration
-output_dir = "/Users/barakmachlev/Documents/Thesis/Influence_of_sampling_intervals_Results/Single_link/Max_Min"
+base_output_dir = "/home/lucy3/BarakMachlev/Thesis/Results/Influence_of_sampling_interval/Single_link"
 if samples_type == "instantaneous":
-    output_dir = f"/Users/barakmachlev/Documents/Thesis/Influence_of_sampling_intervals_Results/Single_link/Instantaneous_{sampling_interval_in_sec}_sec"
+    output_dir = os.path.join(base_output_dir, f"Instantaneous_{sampling_interval_in_sec}_sec")
+else:
+    output_dir = os.path.join(base_output_dir, "Max_Min")
 
 # Create the directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
@@ -43,8 +45,12 @@ dataset.link_set.plot_links(scale=True, scale_factor=1.0)
 plt.grid()
 plt.tick_params(left=False, right=False, labelleft=False, labelbottom=False, bottom=False)
 plt.title("CML Link Map")
+figure_name = "CML_Link_Map.png"
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+plt.tight_layout()
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
-plt.pause(2)
 plt.close()
 
 plt.figure(2)
@@ -63,6 +69,10 @@ plt.grid()
 plt.xlabel("Rain Rate[mm/hr]")
 plt.ylabel("Density")
 plt.title("Rain Rate Histogram")
+figure_name = "Rain_Rate_Histogram.png"
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.tight_layout()
 plt.show(block=False)
 plt.pause(2)
@@ -76,8 +86,13 @@ n_layers = 2  # @param{type:"integer"}
 lr = 1e-4  # @param{type:"number"}
 weight_decay = 1e-4  # @param{type:"number"}
 rnn_type = pnc.neural_networks.RNNType.GRU  # RNN Type
-n_epochs = 100  # @param{type:"integer"}
+n_epochs = 300  # @param{type:"integer"}
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print("✅ Using device:", device)
+if device.type == "cuda":
+    print("  - GPU Name:", torch.cuda.get_device_name(0))
+else:
+    print("  - Running on CPU")
 
 # Extract the first link from the dataset
 link = dataset.link_set.link_list[0]
@@ -144,8 +159,12 @@ print("📊 Metadata mean:", mean_meta)
 print("📊 Metadata std:", std_meta)
 
 # ✅ Wrap into InputNormalizationConfig
-normalization_cfg = InputNormalizationConfig(mean_dynamic, std_dynamic, mean_meta, std_meta)
-
+normalization_cfg = InputNormalizationConfig(
+    torch.from_numpy(mean_dynamic).to(device).float(),
+    torch.from_numpy(std_dynamic).to(device).float(),
+    torch.from_numpy(mean_meta).to(device).float(),
+    torch.from_numpy(std_meta).to(device).float()
+)
 
 model = pnc.scm.rain_estimation.two_step_network(n_layers=n_layers,  # Number of RNN layers
                                                  rnn_type=rnn_type,  # Type of RNN (GRU, LSTM)
@@ -155,6 +174,12 @@ model = pnc.scm.rain_estimation.two_step_network(n_layers=n_layers,  # Number of
                                                  metadata_input_size=2,  # Number of metadata features
                                                  metadata_n_features=metadata_n_features, # Number of features in the metadata
                                                  pretrained=False).to(device)  # Pretrained model is set to False to train the model from scratch.
+
+# ✅ FIX: Manually move normalization constants to GPU (or CPU if that's the selected device)
+model.bb.normalization.mean_dynamic = model.bb.normalization.mean_dynamic.to(device)
+model.bb.normalization.std_dynamic = model.bb.normalization.std_dynamic.to(device)
+model.bb.normalization.mean_metadata = model.bb.normalization.mean_metadata.to(device)
+model.bb.normalization.std_metadata = model.bb.normalization.std_metadata.to(device)
 
 class RegressionLoss(torch.nn.Module):
     def __init__(self, in_gamma, gamma_s=0.9):
@@ -195,21 +220,16 @@ else:
             state = model.init_state(batch_size=1)
 
             # Adjust dimensions for single link
-            rsl = rsl.unsqueeze(0)  # [1, T, F]
-            tsl = tsl.unsqueeze(0)  # [1, T, F]
-            rain_rate = rain_rate.unsqueeze(0)  # [1, T]
+            rsl = rsl.unsqueeze(0).to(device)  # [1, T, F]
+            tsl = tsl.unsqueeze(0).to(device)  # [1, T, F]
+            rain_rate = rain_rate.unsqueeze(0).to(device)  # [1, T]
             metadata = metadata[0].unsqueeze(0).to(device)  # Result: [1, 2]
 
-            #print("📥 Input sizes:")
-            #print("rsl:", rsl.size(), "min:", rsl.min().item(), "max:", rsl.max().item())
-            #print("tsl:", tsl.size(), "min:", tsl.min().item(), "max:", tsl.max().item())
-            #print("rain_rate:", rain_rate.size(), "min:", rain_rate.min().item(), "max:", rain_rate.max().item())
-            #print("metadata:", metadata.size(), "values:", metadata)
-
-            rain_estimation_detection, state = model(torch.cat([rsl, tsl], dim=-1), metadata.to(device), state.detach())
+            rain_estimation_detection, state = model(torch.cat([rsl, tsl], dim=-1), metadata, state.detach())
 
             rain_hat = rain_estimation_detection[:, :, 0]
             rain_detection = rain_estimation_detection[:, :, 1]
+            rain_rate = rain_rate.to(device)
 
             loss_est += loss_function_rain_est(rain_hat, rain_rate)
             loss_detection += loss_function_wet_dry(rain_detection, (rain_rate > 0.1).float())
@@ -224,12 +244,12 @@ else:
             opt.zero_grad()
 
             # Adjust dimensions for single link
-            rsl = rsl.unsqueeze(0)  # [1, T, F]
-            tsl = tsl.unsqueeze(0)  # [1, T, F]
-            rain_rate = rain_rate.unsqueeze(0)  # [1, T]
-            metadata = metadata[0].unsqueeze(0).to(device)  # Result: [1, 2]
+            rsl = rsl.unsqueeze(0).to(device)  # [1, T, F]
+            tsl = tsl.unsqueeze(0).to(device)  # [1, T, F]
+            rain_rate = rain_rate.unsqueeze(0).to(device)  # [1, T]
+            metadata = metadata[0].unsqueeze(0).to(device).to(device)  # Result: [1, 2]
 
-            rain_estimation_detection, state = model(torch.cat([rsl, tsl], dim=-1), metadata.to(device), state.detach())
+            rain_estimation_detection, state = model(torch.cat([rsl, tsl], dim=-1), metadata, state.detach())
             rain_hat = rain_estimation_detection[:, :, 0]
             rain_detection = rain_estimation_detection[:, :, 1]
 
@@ -258,11 +278,15 @@ else:
     plt.ylabel("Loss")
     plt.title(f"Training Loss per Epoch ({samples_type}.png)")
     figure_name = f"loss_plot_over_epochs_{samples_type}.png"
-    plt.savefig(os.path.join(output_dir, figure_name))
+    save_path = os.path.join(output_dir, figure_name)
+    plt.savefig(save_path)
+    print(f"✅ Figure saved to {save_path}")
     plt.show(block=False)
     plt.pause(5)
     plt.close()
-
+    # Print minimum rain rate loss
+    min_loss_est = min(ra.get_results("loss_est"))
+    print(f"📉 Minimum Rain Rate Loss (loss_est) across all epochs: {min_loss_est:.6f}")
 
 model.eval()
 ga = GroupAnalysis()
@@ -324,7 +348,9 @@ cm_display = metrics.ConfusionMatrixDisplay(confusion_matrix=confusion_matrix, d
 cm_display.plot()
 plt.title(f"Confusion Matrix ({samples_type} Sampling)")
 figure_name = f"confusion_matrix_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
@@ -378,7 +404,9 @@ plt.ylabel("Rain Rate [mm/hr]")
 plt.xlabel("Sample Index")
 plt.grid()
 figure_name = f"Detections_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
@@ -391,7 +419,9 @@ plt.legend()
 plt.ylabel("Accumulated Rain-Rate[mm]")
 plt.xlabel("# Samples")
 figure_name = f"Accumulated_Rain_Rate_{samples_type}.png"
-plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()
@@ -418,6 +448,9 @@ plt.legend()
 plt.tight_layout()
 figure_name = f"RainRate_{samples_type}.png"
 plt.savefig(os.path.join(output_dir, figure_name))
+save_path = os.path.join(output_dir, figure_name)
+plt.savefig(save_path)
+print(f"✅ Figure saved to {save_path}")
 plt.show(block=False)
 plt.pause(5)
 plt.close()

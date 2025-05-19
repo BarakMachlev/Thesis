@@ -15,8 +15,8 @@ xy_min = [1.29e6, 0.565e6]  # Link Region
 xy_max = [1.34e6, 0.5875e6]
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
-samples_type = "min_max"  # Options: "instantaneous", "min_max"
-sampling_interval_in_sec = 180 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
+samples_type = "instantaneous"  # Options: "instantaneous", "min_max"
+sampling_interval_in_sec = 50 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
 
 if samples_type == "min_max":
     rnn_input_size = 4  # MRSL, mRSL, MTSL, mTSL
@@ -26,7 +26,7 @@ elif samples_type == "instantaneous":
 
 
 # Set output directory based on sampling configuration (lab computer path)
-base_output_dir = "/home/lucy3/BarakMachlev/Thesis/Results/Influence_of_sampling_interval"
+base_output_dir = "/home/lucy3/BarakMachlev/Thesis/Results/Influence_of_sampling_interval/Multiple_links"
 if samples_type == "instantaneous":
     output_dir = os.path.join(base_output_dir, f"Instantaneous_{sampling_interval_in_sec}_sec")
 else:
@@ -86,7 +86,7 @@ n_layers = 2  # @param{type:"integer"}
 lr = 1e-4  # @param{type:"number"}
 weight_decay = 1e-4  # @param{type:"number"}
 rnn_type = pnc.neural_networks.RNNType.GRU  # RNN Type
-n_epochs = 200  # @param{type:"integer"}
+n_epochs = 600  # @param{type:"integer"}
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("✅ Using device:", device)
 if device.type == "cuda":
