@@ -8,6 +8,8 @@
 !.gitignore
 !.vscode/
 !.vscode/*
+!encoder_only_transformer/
+!encoder_only_transformer/**
 
 # Explicitly ignore the entire data folder
 data/
