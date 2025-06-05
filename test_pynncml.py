@@ -131,7 +131,7 @@ assert validation_dataset.indices[-1] == target_link, "❌ Link 0 is not last in
 
 model = pnc.scm.rain_estimation.two_step_network(n_layers=n_layers,  # Number of RNN layers
                                                  rnn_type=rnn_type,  # Type of RNN (GRU, LSTM)
-                                                 normalization_cfg=pnc.training_helpers.compute_data_normalization(data_loader, rnn_input_size = rnn_input_size), # Compute the normalization statistics from the training dataset.
+                                                 normalization_cfg=pnc.training_helpers.compute_data_normalization(data_loader, network_dynamic_input_size = rnn_input_size), # Compute the normalization statistics from the training dataset.
                                                  rnn_input_size = rnn_input_size,  # 3 + 3 (RSL + TSL)
                                                  rnn_n_features=rnn_n_features,  # Number of features in the RNN
                                                  metadata_input_size=2,  # Number of metadata features
