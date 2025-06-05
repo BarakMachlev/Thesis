@@ -8,8 +8,11 @@
 !.gitignore
 !.vscode/
 !.vscode/*
-!encoder_only_transformer/
-!encoder_only_transformer/**
+
+# Explicitly ignore specific Python files
+my_pc_encoder_only_transformer.py
+my_pc_test_pynncml.py
+test_informer.py
 
 # Explicitly ignore the entire data folder
 data/
