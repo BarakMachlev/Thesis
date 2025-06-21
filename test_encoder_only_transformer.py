@@ -12,12 +12,23 @@ import torch.nn as nn
 from io import StringIO
 import sys
 
+def set_seed(seed=42):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # for multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+set_seed(42)
+
 xy_min = [1.29e6, 0.565e6]  # Link Region
 xy_max = [1.34e6, 0.5875e6]
 time_slice = slice("2015-06-01", "2015-08-31")  # Time Interval
 
 samples_type = "instantaneous"  # Options: "instantaneous", "min_max"
-sampling_interval_in_sec = 900 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
+sampling_interval_in_sec = 50 # Options: 10, 20, 30, 50, 60, 90, 100, 150, 180, 300, 450, 900
 
 if samples_type == "min_max":
     dynamic_input_size = 4  # MRSL, mRSL, MTSL, mTSL
@@ -27,7 +38,7 @@ elif samples_type == "instantaneous":
 
 
 # Set output directory based on sampling configuration (lab computer path)
-base_output_dir = "/home/lucy3/BarakMachlev/Thesis/Results/Encoder_only_transformer"
+base_output_dir = "/home/lucy3/BarakMachlev/Thesis/Results/Encoder_only_transformer_750_3"
 if samples_type == "instantaneous":
     output_dir = os.path.join(base_output_dir, f"Instantaneous_{sampling_interval_in_sec}_sec")
 else:
@@ -91,38 +102,47 @@ else:
     print("  - Running on CPU")
 
 
-# Configurable target link
-target_link = 0  # 👈 Change this to choose which link must appear last in validation
+# Step 1: Filter out links shorter than 750m
+valid_indices = [
+    i for i, link in enumerate(dataset.link_set.link_list)
+    if link.meta_data.length * 1000 >= 750
+]
 
-# Fixed split for 132 links: 106 for training, 26 for validation (link 0 last in val)
-assert len(dataset) == 132, "Unexpected number of links — expected 132!"
-all_indices = np.arange(132)
-np.random.seed(42)  # Ensure repeatable split
-np.random.shuffle(all_indices)
+assert len(valid_indices) == 80, f"Expected 80 links >= 750m, got {len(valid_indices)}"
 
-# Remove 0 (we will force it into last val index)
-all_indices = all_indices[all_indices != target_link]
+# Step 2: Remove target_link if it’s included — we'll force it into validation
+target_link = 0  # 👈 Change this as needed
+valid_indices = [i for i in valid_indices if i != target_link]
 
-train_indices = all_indices[:106].tolist()  # 106
-val_indices = all_indices[106:].tolist()  # 26
-val_indices.append(target_link)  # Ensure link 0 is last in validation
+# Step 3: Shuffle and split
+np.random.seed(42)
+np.random.shuffle(valid_indices)
 
+train_indices = valid_indices[:64]
+val_indices = valid_indices[64:]
+
+# Step 4: Force target_link to be last in validation set
+val_indices.append(target_link)
+
+# Step 5: Create datasets
 training_dataset = Subset(dataset, train_indices)
 validation_dataset = Subset(dataset, val_indices)
 
 data_loader = torch.utils.data.DataLoader(training_dataset, batch_size)
 val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size)
 
+# ✅ Confirmation
+print(f"✅ Using only links with length ≥ 750m")
 print(f"✅ Link {target_link} is ensured as last in validation set.")
+print(f"✅ Train set: {len(train_indices)} links | Val set: {len(val_indices)} links")
 
 # 🔍 Sanity checks
 train_ids = set(training_dataset.indices)
 val_ids = set(validation_dataset.indices)
 
 assert train_ids.isdisjoint(val_ids), "❌ Overlap between training and validation sets!"
-assert train_ids.union(val_ids) == set(range(132)), "❌ Some link indices missing!"
-assert validation_dataset.indices[-1] == target_link, "❌ Link 0 is not last in validation set!"
-
+assert target_link in val_ids, "❌ Target link missing from validation set!"
+assert validation_dataset.indices[-1] == target_link, "❌ Target link is not last in validation set!"
 
 window_size = 32
 metadata_n_features = 32
@@ -141,6 +161,11 @@ model = pnc.scm.rain_estimation.two_step_network_with_attention(normalization_cf
                                                                 num_encoder_layers = num_encoder_layers,
                                                                 h = h).to(device)
 
+# This initialize a separate EMA model that will track the smoothed version of our model weights using exponential moving average with decay factor 0.999.
+# from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+# ema_decay = 0.999
+# ema_model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(ema_decay))
+
 # Original Hai optimizer - The lr here is a dummy starting point — it will be overridden by the scheduler.
 opt = torch.optim.RAdam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -151,7 +176,6 @@ opt = torch.optim.RAdam(model.parameters(), lr=lr, weight_decay=weight_decay)
 #        return 0.5        # 0.5 × 1e-4 = 5e-5
 #    else:
 #        return 0.1        # 0.1 × 1e-4 = 1e-5
-
 #scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lr_schedule)
 
 class RegressionLoss(torch.nn.Module):
@@ -228,6 +252,8 @@ else:
                 # Take the derivative w.r.t. model parameters $\Theta$
                 loss.backward()
                 opt.step()
+                # Updates the EMA model after each gradient update (step), which is the core mechanism of EMA.
+                # ema_model.update_parameters(model)
                 steps_counter += 1
                 am.add_results(loss=loss.item(), loss_est=loss_est.item(),
                             loss_detection=loss_detection.item())  # Log results to average.
@@ -235,8 +261,9 @@ else:
         ra.add_results(loss=am.get_results("loss"), loss_est=am.get_results("loss_est"),
                     loss_detection=am.get_results("loss_detection"))
 
-    # Save trained weights
+    # Save trained (EMA- second line) weights
     torch.save(model.state_dict(), model_path)
+    #torch.save(ema_model.module.state_dict(), model_path)
     print(f"✅ Weights saved to: {model_path}")
 
     plt.plot(ra.get_results("loss"), label="Total Loss")
@@ -259,8 +286,9 @@ else:
     print(steps_counter)
     print("-----------------------------------------------")
 
-
+print("📊 Evaluating model...")
 model.eval()
+#ema_model.eval()
 ga = GroupAnalysis()
 
 with torch.no_grad():
